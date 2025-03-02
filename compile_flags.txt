@@ -1,5 +1,6 @@
 -xc
 -std=gnu89
 -Wall
+-Wextra
 -pedantic
 -I/home/d4y2k/Programming/arp-sniffer/include/

@@ -1,84 +1,51 @@
 #ifndef NET_H_
 #define NET_H_
 
-#include <stdint.h>
+#include "threads.h"
 
 #define MAC_ADDR_SIZE  6
 #define IPV4_ADDR_SIZE 4
-#define IPV6_ADDR_SIZE 16
-#define MAX_DATA_SIZE  48 /* 6 + 16 + 6 + 16 */
+#define BUFFER_SIZE    60
+
+#define BITSET_FIELD(type, name)   \
+    union {                        \
+        type val;                  \
+        u8   bytes[sizeof (type)]; \
+    } name##_u
 
 struct eth_header {
-    uint8_t dest[MAC_ADDR_SIZE];
-    uint8_t src[MAC_ADDR_SIZE];
-    union {
-        uint16_t val;
-        uint8_t  bytes[2];
-    } utype;
+    u8 dest[MAC_ADDR_SIZE];
+    u8 src[MAC_ADDR_SIZE];
+    BITSET_FIELD (u16, type);
 };
 
 struct arp_request {
-    union {
-        uint16_t val;
-        uint8_t  bytes[2];
-    } uha_type;
-    union {
-        uint16_t val;
-        uint8_t  bytes[2];
-    } upr_type;
-    uint8_t ha_size;
-    uint8_t pr_size;
-    union {
-        uint16_t val;
-        uint8_t  bytes[2];
-    } uopcode;
-    uint8_t data[MAX_DATA_SIZE];
+    BITSET_FIELD (u16, ha_type);
+    BITSET_FIELD (u16, pa_type);
+    u8 ha_size;
+    u8 pr_size;
+    BITSET_FIELD (u16, opcode);
+    u8 sender_ha[MAC_ADDR_SIZE];
+    u8 sender_pa[IPV4_ADDR_SIZE];
+    u8 target_ha[MAC_ADDR_SIZE];
+    u8 target_pa[IPV4_ADDR_SIZE];
 };
 
-struct ipv4_arp_request {
-    union {
-        uint16_t val;
-        uint8_t  bytes[2];
-    } uha_type;
-    union {
-        uint16_t val;
-        uint8_t  bytes[2];
-    } upr_type;
-    uint8_t ha_size;
-    uint8_t pr_size;
-    union {
-        uint16_t val;
-        uint8_t  bytes[2];
-    } uopcode;
-    uint8_t sender_ha[MAC_ADDR_SIZE];
-    uint8_t sender_pa[IPV4_ADDR_SIZE];
-    uint8_t target_ha[MAC_ADDR_SIZE];
-    uint8_t target_pa[IPV4_ADDR_SIZE];
-    uint8_t padding[28];
+struct listen_arp_args {
+    thrd_pool_t *tp;
+    i32          fd;
 };
 
-struct ipv6_arp_request {
-    union {
-        uint16_t val;
-        uint8_t  bytes[2];
-    } uha_type;
-    union {
-        uint16_t val;
-        uint8_t  bytes[2];
-    } upr_type;
-    uint8_t ha_size;
-    uint8_t pr_size;
-    union {
-        uint16_t val;
-        uint8_t  bytes[2];
-    } uopcode;
-    uint8_t sender_ha[MAC_ADDR_SIZE];
-    uint8_t sender_pa[IPV6_ADDR_SIZE];
-    uint8_t target_ha[MAC_ADDR_SIZE];
-    uint8_t target_pa[IPV6_ADDR_SIZE];
+struct spoof_args {
+    struct eth_header  *eth;
+    struct arp_request *arp;
 };
 
-void arp_req_normalize (struct arp_request *arp_req);
-void eth_hdr_normalize (struct eth_header *eth_hdr);
+void  arp_req_normalize (struct arp_request *arp_req);
+void  eth_hdr_normalize (struct eth_header *eth_hdr);
+
+void  listener_sock_init (i32 *fd);
+void *listen_arp (void *arg);
+void *spoof (void *arg);
 
 #endif

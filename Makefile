@@ -5,11 +5,11 @@ BINDIR = bin/
 SRCDIR = src/
 INCDIR = include/
 
-SRCS = main.c net.c utils.c
+SRCS = main.c net.c utils.c options.c threads.c 
 OBJS = $(SRCS:.c=.o)
 
 CC = gcc
-CCFLAGS = -std=gnu89 -pedantic -Wall -DCMAKE_EXPORT_COMPILE_COMMANDS=1
+CCFLAGS = -std=gnu89 -pedantic -Wall -Wextra -lpthread -g
 
 all: $(BINDIR)$(TARGET)
 

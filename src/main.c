@@ -1,7 +1,5 @@
 #include <arpa/inet.h>
-#include <bits/pthreadtypes.h>
 #include <endian.h>
-#include <errno.h>
 #include <linux/if_packet.h>
 #include <net/ethernet.h>
 #include <net/if_arp.h>
@@ -14,20 +12,23 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include "common.h"
 #include "net.h"
-#include "utils.h"
-
-#define BUFFER_SIZE 1488
+#include "options.h"
+#include "threads.h"
 
 int
 main (int argc, char *argv[])
 {
+#if 0
     int                sockfd;
     ssize_t            recvsz;
     uint8_t           *buf;
     struct sockaddr_ll sll;
     struct eth_header  eth_hdr;
     struct arp_request arp_req;
+
+    parse_options (argc, argv);
 
     if ((sockfd = socket (AF_PACKET, SOCK_RAW, htons (ETH_P_ARP))) == -1) {
         perror ("socket");
@@ -47,14 +48,14 @@ main (int argc, char *argv[])
 
     printf ("Listening...\n");
 
-    do {
-        buf = malloc (BUFFER_SIZE);
-        if (buf == NULL) {
-            close (sockfd);
-            perror ("alloc");
-            exit (EXIT_FAILURE);
-        }
+    buf = malloc (BUFFER_SIZE);
+    if (buf == NULL) {
+        close (sockfd);
+        perror ("alloc");
+        exit (EXIT_FAILURE);
+    }
 
+    do {
         recvsz = recvfrom (sockfd, buf, BUFFER_SIZE, 0, NULL, NULL);
 
         if (recvsz == -1 && errno == EWOULDBLOCK) {
@@ -75,7 +76,6 @@ main (int argc, char *argv[])
         eth_hdr_normalize (&eth_hdr);
         arp_req_normalize (&arp_req);
 
-        print_eth_hdr (&eth_hdr);
         print_arp_req (&arp_req);
 
         usleep (250);
@@ -83,6 +83,34 @@ main (int argc, char *argv[])
 
     close (sockfd);
     free (buf);
+
+    return EXIT_SUCCESS;
+#endif
+    struct listen_arp_args listen_args;
+    i32                    listener_fd;
+    pthread_t              listener_thrd;
+    thrd_pool_t           *thrd_pool;
+
+    parse_options (argc, argv);
+
+    thrd_pool = malloc (sizeof (*thrd_pool));
+    if (thrd_pool == NULL) {
+        exit (EXIT_FAILURE);
+    }
+
+    if (thrd_pool_create (thrd_pool, THREADS_COUNT) == -1) {
+        free (thrd_pool);
+        exit (EXIT_FAILURE);
+    }
+
+    listener_sock_init (&listener_fd);
+    listen_args.fd = listener_fd;
+    listen_args.tp = thrd_pool;
+
+    pthread_create (&listener_thrd, NULL, listen_arp, (void *)&listen_args);
+    pthread_join (listener_thrd, NULL);
+
+    thrd_pool_destroy (thrd_pool);
 
     return EXIT_SUCCESS;
 }
