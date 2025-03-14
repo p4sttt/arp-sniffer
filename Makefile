@@ -9,7 +9,7 @@ SRCS = main.c net.c utils.c options.c threads.c
 OBJS = $(SRCS:.c=.o)
 
 CC = gcc
-CCFLAGS = -std=gnu89 -pedantic -Wall -Wextra -lpthread -g
+CCFLAGS = -std=gnu11 -pedantic -Wall -Wextra -lpthread -g
 
 all: $(BINDIR)$(TARGET)
 

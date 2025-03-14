@@ -1,5 +1,5 @@
 -xc
--std=gnu89
+-std=gnu11
 -Wall
 -Wextra
 -pedantic

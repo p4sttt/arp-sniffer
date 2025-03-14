@@ -3,6 +3,7 @@
 
 #include "common.h"
 #include <pthread.h>
+#include <stdatomic.h>
 
 #define THREADS_COUNT 2
 
@@ -16,33 +17,32 @@ typedef struct task_s {
 
 typedef struct {
     pthread_mutex_t mutex;
+    pthread_cond_t  cond;
+    atomic_size_t   len;
     task_t         *head;
     task_t         *tail;
-} tasks_list_t;
+} tasks_queue_t;
 
 typedef struct {
-    pthread_mutex_t mutex;
-    pthread_cond_t  cond_work;
-    pthread_cond_t  cond_listen;
-    tasks_list_t    list;
-    pthread_t      *thrds;
-    size_t          thrds_cnt;
-    u32             thrds_free;
-    u8              shutdown;
+    pthread_t    *thrds;
+    size_t        count;
+    atomic_size_t free;
+    atomic_bool   shutdown;
 } thrd_pool_t;
 
 extern pthread_mutex_t print_mutex;
+extern thrd_pool_t     thrd_pool;
+extern tasks_queue_t   tasks_queue;
 
 /**/
 
-i32   thrd_pool_create (thrd_pool_t *tp, size_t thrds_cnt);
-i32   thrd_pool_destroy (thrd_pool_t *tp);
+i32   thrd_pool_init (size_t thrds_cnt);
+void  thrd_pool_destroy (void);
 
-i32   tasks_list_create (tasks_list_t *tl);
-i32   tasks_list_destroy (tasks_list_t *tl);
-i32   tasks_list_pop (tasks_list_t *tl, task_t **retval);
-i32   tasks_list_push (tasks_list_t *tl, task_t *task);
-i32   tasks_list_empty (const tasks_list_t *tl);
+i32   tasks_queue_init (void);
+i32   tasks_queue_destroy (void);
+i32   tasks_queue_add (tasks_queue_t *tq, task_t *task);
+i32   get_next_task (tasks_queue_t *tq, task_t **retval);
 
 void *worker (void *arg);
 

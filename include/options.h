@@ -7,6 +7,8 @@ typedef struct {
 
 extern options_t options;
 
-void             parse_options (int argc, char **argv);
+/* */
+
+void parse_options (int argc, char **argv);
 
 #endif

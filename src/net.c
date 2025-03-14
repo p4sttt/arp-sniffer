@@ -1,6 +1,7 @@
 #include "net.h"
 
 #include "common.h"
+#include "threads.h"
 #include "utils.h"
 
 #include <arpa/inet.h>
@@ -27,84 +28,141 @@ eth_hdr_normalize (struct eth_header *eth_hdr)
     eth_hdr->type_u.val = htons (eth_hdr->type_u.val);
 }
 
-void
+int
 listener_sock_init (i32 *fd)
 {
-    struct sockaddr_ll sll;
-
     if ((*fd = socket (AF_PACKET, SOCK_RAW, htons (ETH_P_ARP))) == -1) {
         perror ("socket");
-        exit (EXIT_FAILURE);
+        return -1;
     }
 
-    memset (&sll, 0, sizeof (struct sockaddr_ll));
-    sll.sll_family   = AF_PACKET;
-    sll.sll_protocol = htons (ETH_P_ARP);
-    sll.sll_ifindex  = 2;
+    return 0;
+}
 
-    if (bind (*fd, (struct sockaddr *)&sll, sizeof (sll)) == -1) {
-        close (*fd);
-        perror ("bind");
-        exit (EXIT_FAILURE);
+int
+get_default_gateway (char *gw_ip, char *if_name)
+{
+    u64   dest, gateway;
+    char  line[256];
+    FILE *fp;
+
+    fp = fopen (PROC_NET_ROUTE, "r");
+    if (fp == NULL) {
+        perror ("fopen");
+        return -1;
     }
 
-    return;
+    /* skip table header */
+    fgets (line, sizeof (line), fp);
+
+    while (fgets (line, sizeof (line), fp)) {
+        if (sscanf (line, "%15s %lx %lx", if_name, &dest, &gateway) == 3 &&
+            dest == 0) {
+            memcpy (gw_ip, &gateway, IPV4_ADDR_SIZE);
+            fclose (fp);
+            return 0;
+        }
+    }
+
+    fclose (fp);
+    return -1;
+}
+
+int
+should_arp_passed (struct arp_request *arp_req)
+{
+    if (!memcmp (arp_req->sender_pa, arp_req->target_pa, IPV4_ADDR_SIZE) ||
+        arp_req->opcode_u.val == 2)
+        return -1;
+
+    return 0;
 }
 
 void *
 listen_arp (void *arg)
 {
-    struct listen_arp_args *args = arg;
-    struct eth_header      *eth_hdr;
-    struct arp_request     *arp_req;
-    ssize_t                 recvsz;
-    task_t                 *task;
-    u8                     *buffer;
+    struct spoof_args  *task_args;
+    struct eth_header  *eth_hdr;
+    struct arp_request *arp_req;
+    ssize_t             recvsz;
+    task_t             *task;
+    i32                *fd = arg;
+    u8                 *buffer;
 
     buffer = malloc (BUFFER_SIZE);
     if (buffer == NULL) {
-        close (args->fd);
         return NULL;
     }
 
     for (;;) {
-        pthread_mutex_lock (&args->tp->mutex);
-        while (args->tp->thrds_free == 0 && !args->tp->shutdown) {
-            pthread_cond_wait (&args->tp->cond_listen, &args->tp->mutex);
+        pthread_mutex_lock (&thrd_pool->mutex);
+        while (thrd_pool->thrds_free == 0 && !thrd_pool->shutdown) {
+            pthread_cond_wait (&thrd_pool->cond_listen, &thrd_pool->mutex);
         }
-        pthread_mutex_unlock (&args->tp->mutex);
+        pthread_mutex_unlock (&thrd_pool->mutex);
 
-        recvsz = recvfrom (args->fd, buffer, BUFFER_SIZE, 0, NULL, NULL);
+        recvsz = recv (*fd, buffer, BUFFER_SIZE, 0);
         if (recvsz == -1 && errno == EWOULDBLOCK) {
             return NULL;
         } else if (recvsz == -1) {
             continue;
         }
 
-        task    = malloc (sizeof (*task));
-
         eth_hdr = malloc (sizeof (*eth_hdr));
-        arp_req = malloc (sizeof (*arp_req));
+        if (eth_hdr == NULL) {
+            free (buffer);
+            return NULL;
+        }
 
-        /* TODO: create funcs for copy from buffer to struct */
+        arp_req = malloc (sizeof (*arp_req));
+        if (arp_req == NULL) {
+            free (buffer);
+            free (eth_hdr);
+            return NULL;
+        }
+
         memcpy (eth_hdr, buffer, sizeof (*eth_hdr));
         memcpy (arp_req, buffer + sizeof (*eth_hdr), sizeof (*arp_req));
-
         eth_hdr_normalize (eth_hdr);
         arp_req_normalize (arp_req);
 
+        pthread_mutex_lock (&print_mutex);
         print_eth_hdr (eth_hdr);
+        print_arp_req (arp_req);
+        pthread_mutex_unlock (&print_mutex);
 
-        task->args = malloc (sizeof (struct spoof_args));
-        ((struct spoof_args *)task->args)->eth = eth_hdr;
-        ((struct spoof_args *)task->args)->arp = arp_req;
-        task->func                             = spoof;
+        task = malloc (sizeof (*task));
+        if (task == NULL) {
+            free (buffer);
+            free (eth_hdr);
+            free (arp_req);
+            return NULL;
+        }
 
-        pthread_mutex_lock (&args->tp->mutex);
-        tasks_list_push (&args->tp->list, task);
-        pthread_cond_signal (&args->tp->cond_work);
-        pthread_mutex_unlock (&args->tp->mutex);
+        task_args = malloc (sizeof (*task_args));
+        if (task_args == NULL) {
+            free (task);
+            free (buffer);
+            free (eth_hdr);
+            free (arp_req);
+            return NULL;
+        }
+
+        task_args->eth_hdr = eth_hdr;
+        task_args->arp_req = arp_req;
+        task->args         = task_args;
+        task->func         = spoof;
+
+        /* TODO: impleent unique ip address validation */
+        pthread_mutex_lock (&thrd_pool->mutex);
+        tasks_list_push (&thrd_pool->list, task);
+        pthread_cond_signal (&thrd_pool->cond_work);
+        pthread_mutex_unlock (&thrd_pool->mutex);
     }
+
+    free (eth_hdr);
+    free (arp_req);
+    free (task);
 
     return NULL;
 }
@@ -112,20 +170,15 @@ listen_arp (void *arg)
 void *
 spoof (void *arg)
 {
-    struct spoof_args *args = (struct spoof_args *)arg;
-    for (;;) {
-        pthread_mutex_lock (&print_mutex);
-        printf ("i will be spoofing %d.%d.%d.%d\n",
-                args->arp->target_pa[0],
-                args->arp->target_pa[1],
-                args->arp->target_pa[2],
-                args->arp->target_pa[3]);
-        pthread_mutex_unlock (&print_mutex);
+    struct arp_request *arp = ((struct spoof_args *)arg)->arp_req;
 
-        sleep (100);
-    }
+    pthread_mutex_lock (&print_mutex);
+    printf ("PROCESSING\n\t%d.%d.%d.%d\n",
+            arp->target_pa[0],
+            arp->target_pa[1],
+            arp->target_pa[2],
+            arp->target_pa[3]);
+    pthread_mutex_unlock (&print_mutex);
 
-    free (args->arp);
-    free (args->eth);
     return NULL;
 }

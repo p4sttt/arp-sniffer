@@ -7,6 +7,8 @@
 #define IPV4_ADDR_SIZE 4
 #define BUFFER_SIZE    60
 
+#define PROC_NET_ROUTE "/proc/net/route"
+
 #define BITSET_FIELD(type, name)   \
     union {                        \
         type val;                  \
@@ -37,14 +39,17 @@ struct listen_arp_args {
 };
 
 struct spoof_args {
-    struct eth_header  *eth;
-    struct arp_request *arp;
+    struct eth_header  *eth_hdr;
+    struct arp_request *arp_req;
 };
 
 void  arp_req_normalize (struct arp_request *arp_req);
 void  eth_hdr_normalize (struct eth_header *eth_hdr);
 
-void  listener_sock_init (i32 *fd);
+int   listener_sock_init (i32 *fd);
+int   get_default_gateway (char *gateway_ip, char *ifname);
+int   should_arp_passed (struct arp_request *arp_req);
+
 void *listen_arp (void *arg);
 void *spoof (void *arg);
 
